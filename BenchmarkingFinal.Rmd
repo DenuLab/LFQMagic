@@ -1,0 +1,302 @@
+---
+title: "BenchmarkingFinal"
+author: "Lgan Wright"
+date: "July 15, 2019"
+output: pdf_document
+---
+
+```{r setup, echo=FALSE, warning=FALSE, message=FALSE}
+options(stringsAsFactors = F)
+library("RforProteomics")
+library("plyr")
+library('MSstats', warn.conflicts = F, quietly = T, verbose = F)
+library("NormalyzerDE")
+library("knitr")
+library("foreach")
+library("genefilter")
+library(ROTS); library(data.table);
+library(SpikeInSubset); library(limma); library(PECA); library(readxl); 
+library(dplyr); library(tidyr); library(ggplot2); library(ggthemes); 
+library(printr); library(mratios); library(extrafont); library(qvalue)
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages("quantreg")
+#BiocManager::install("MSnbase")
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r DDA Peptide Input, echo = FALSE}
+conditions <- read.csv("annotation.csv")
+conditions <- conditions[,1:2]
+names(conditions) <- c("run", "condition")
+
+
+dda <- read.csv("peptides.csv")
+dda <- dda[, c(1, 37, grep("Intensity", names(dda)))]
+names(dda)[4:19] <- unlist(lapply(names(dda)[4:19], function(x) {
+  unlist(strsplit(x, "\\."))[1]
+}))
+dda <- dda[,-3]
+dda <- gather(dda, run, intensity, 3:18, convert = TRUE, factor_key = TRUE)
+dda$run <- as.character(dda$run)
+dda <- merge(dda, conditions)
+rm(conditions)
+
+names(dda)[2] <- "peptide"
+
+dda$quant <- "dda"
+dda$condition <- do.call(paste, c(dda[,c("run", "condition", "quant")], sep = "_"))
+dda <- dda[,-1]
+
+dda$species <- NA
+dda[grep("HUMAN", dda$Species), "species"] <- "human"
+dda[grep("ECOLI", dda$Species), "species"] <- "ecoli"
+dda <- dda[which(!is.na(dda$species)), ]
+dda <- dda[,-2]
+dda <- dda[which(dda$intensity != 0), ]
+
+# There are only six duplicate quants for proteins in the same run. I'm 
+# unsure why MaxQuant is doing this. Perhaps it is for a different modification 
+# state of that protein? There are very few, so I will just remove the
+# duplicates. 
+dda <- dda[which(!duplicated(dda[ , c("peptide", "condition", "species")])), ]
+
+ddaPep <- spread(dda, condition, intensity)
+#write.csv(ddaPep, "dda_peptide_wide.csv", row.names = F)
+
+ddaPep <- read.csv("dda_peptide_wide.csv")
+ddaPep <- ddaPep %>% select(-quant)
+
+lddaPep <- gather(ddaPep, run, intensity, 3:18) %>% filter(!is.na(intensity))
+# Filter out those near zero.
+lddaPep <- lddaPep[which(lddaPep$intensity > 10), ]
+
+#write.csv(lddaPep, "dda_peptide_long.csv", row.names = F)
+out_dir = "C:/Users/Logan Wright/R Scripts/NormalyzerOutput/"
+normalyzer(
+  jobName="DDA_PeptideNormalization",
+  designPath="C:/Users/Logan Wright/DDA_Design_Matrix.txt", 
+  dataPath= "C:/Users/Logan Wright/R Scripts/dda_peptide_wide.csv",
+  outputDir= out_dir,
+  zeroToNA =TRUE,
+  requireReplicates = FALSE)
+
+# Add Normalization identifier column and combine all text files
+list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/DDA_PeptideNormalization/", recursive = TRUE,
+                            pattern = "\\.txt$", 
+                            full.names = TRUE)
+DDA_Peptide_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
+                use.names = TRUE, idcol = "FileName")
+```
+
+```{r DDA Protein Input, echo = FALSE}
+conditions <- read.csv("annotation.csv")
+conditions <- conditions[,1:2]
+names(conditions) <- c("run", "condition")
+
+
+dda <- read.csv("proteinGroups.csv")
+dda <- dda[, c(8, grep("LFQ", names(dda)))]
+names(dda)[2:17] <- unlist(lapply(names(dda)[2:17], function(x) {
+  unlist(strsplit(x, "\\."))[3]
+}))
+dda <- gather(dda, run, intensity, 2:17, convert = TRUE, factor_key = TRUE)
+dda$run <- as.character(dda$run)
+dda <- merge(dda, conditions)
+rm(conditions)
+
+names(dda)[2] <- "protein"
+
+dda$quant <- "dda"
+dda$condition <- do.call(paste, c(dda[,c("run", "condition", "quant")], sep = "_"))
+dda <- dda[,-1]
+
+dda$species <- NA
+dda[grep("HUMAN", dda$protein), "species"] <- "human"
+dda[grep("ECOLI", dda$protein), "species"] <- "ecoli"
+dda <- dda[which(!is.na(dda$species)), ]
+
+dda <- dda[which(dda$intensity != 0), ]
+
+# There are only six duplicate quants for proteins in the same run. I'm 
+# unsure why MaxQuant is doing this. Perhaps it is for a different modification 
+# state of that protein? There are very few, so I will just remove the
+# duplicates. 
+dda <- dda[which(!duplicated(dda[ , c("protein", "condition", "species")])), ]
+
+ddaProt <- spread(dda, condition, intensity)
+
+#write.csv(ddaProt, "dda_protein_wide.csv", row.names = F)
+
+ddaProt <- read.csv("dda_protein_wide.csv")
+ddaProt <- ddaProt %>% select(-quant)
+
+lddaProt <- gather(ddaProt, run, intensity, 3:18) %>% filter(!is.na(intensity))
+# Filter out those near zero.
+lddaProt <- lddaProt[which(lddaProt$intensity > 10), ]
+
+#write.csv(lddaProt, "dda_protein_long.csv", row.names = F)
+
+normalyzer(
+  jobName="DDA_ProteinNormalization", 
+  designPath="C:/Users/Logan Wright/DDA_Design_Matrix.txt",
+  dataPath="C:/Users/Logan Wright/R Scripts/dda_protein_wide.csv",
+  outputDir="C:/Users/Logan Wright/R Scripts/",
+  zeroToNA =TRUE,
+  requireReplicates = FALSE)
+list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/DDA_ProteinNormalization/", recursive = TRUE,
+                            pattern = "\\.txt$", 
+                            full.names = TRUE)
+DDA_Protein_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
+                use.names = TRUE, idcol = "FileName")
+
+```
+
+```{r DIA Peptide Input, echo = FALSE}
+dia <- read.csv("20190617_122759_EA100915_Benchmarkv2_Report.csv")
+#Rolled up on ms2 - avg
+dia <- dia[,c(1,2,6,7,11)]
+names(dia) <- c("condition", "run", "protein", "peptide", "ms2_peak")
+
+for(i in 1:length(dia$ms2_peak)) {
+  if (dia[i,]$ms2_peak < 1) {
+   dia[i,]$ms2_peak = 0 
+  }
+}
+
+dia$species <- NA
+dia[grep("HUMAN", dia$protein), "species"] <- "human"
+dia[grep("ECOLI", dia$protein), "species"] <- "ecoli"
+# There's ~80 bovine, pig, and keratin hits. These are likely flagged by the 
+# database search as common contaminants. 
+dia <- dia[which(!is.na(dia$species)), ]
+
+dia$quant <- "dia"
+dia$condition <- do.call(paste, c(dia[,c("run", "condition", "quant")], sep = "_"))
+dia <- dia[,-2:-3]
+#Remove duplicates
+dia <- dia[which(!duplicated(dia[ , c("peptide", "condition", "species")])), ]
+dia <- dia[which(dia$ms2_peak > 1), ]
+
+diaPep <- spread(dia, condition, ms2_peak)
+
+#write.csv(diaPep, "dia_peptide_wide.csv", row.names = F)
+
+diaPep <- read.csv("dia_peptide_wide.csv")
+diaPep <- diaPep %>% select(-quant)
+ldiaPep <- gather(diaPep, run, intensity, 3:18) %>% filter(!is.na(intensity))
+# Filter out those near zero.
+ldiaPep <- ldiaPep[which(ldiaPep$intensity > 10), ]
+
+#write.csv(ldiaPep, "dia_peptide_long.csv", row.names = F)
+
+normalyzer(
+  jobName="DIA_PeptideNormalization",
+  designPath="C:/Users/Logan Wright/DIA_Design_Matrix.txt", 
+  dataPath= "C:/Users/Logan Wright/R Scripts/dia_peptide_wide.csv",
+  outputDir="C:/Users/Logan Wright/R Scripts/",
+  zeroToNA =TRUE,
+  requireReplicates = FALSE)
+
+# Add Normalization identifier column and combine all text files
+list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/DIA_PeptideNormalization/", recursive = TRUE,
+                            pattern = "\\.txt$", 
+                            full.names = TRUE)
+DIA_Peptide_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
+                use.names = TRUE, idcol = "FileName")
+```
+
+```{r DIA Protein Input, echo = FALSE}
+dia <- read.csv("EQ_100915_Spectronaut_Protein.csv")
+#Rolled up on ms2 - avg
+dia <- dia[,c(1,2,4,8)]
+names(dia) <- c("condition", "run", "protein", "ms2_avg")
+dia$species <- NA
+dia[grep("HUMAN", dia$protein), "species"] <- "human"
+dia[grep("ECOLI", dia$protein), "species"] <- "ecoli"
+# There's ~80 bovine, pig, and keratin hits. These are likely flagged by the 
+# database search as common contaminants. 
+dia <- dia[which(!is.na(dia$species)), ]
+
+dia$quant <- "dia"
+dia$condition <- do.call(paste, c(dia[,c("run", "condition", "quant")], sep = "_"))
+dia <- dia[,-2]
+diaProt <- spread(dia, condition, ms2_avg)
+
+# write.csv(diaProt, "dia_protein_wide.csv", row.names = F)
+diaProt <- read.csv("dia_protein_wide.csv")
+diaProt <- diaProt %>% select(-quant)
+
+ldiaProt <- gather(diaProt, run, intensity, 3:18) %>% filter(!is.na(intensity))
+# Filter out those near zero.
+ldiaProt <- ldiaProt[which(ldiaProt$intensity > 10), ]
+
+#write.csv(ldiaProt, "dia_protein_long.csv", row.names = F)
+
+normalyzer(
+  jobName="DIA_ProteinNormalization", 
+  designPath="C:/Users/Logan Wright/DIA_Design_Matrix.txt",
+  dataPath="C:/Users/Logan Wright/R Scripts/dia_protein_wide.csv",
+  outputDir="C:/Users/Logan Wright/R Scripts/",
+  zeroToNA =TRUE,
+  requireReplicates = FALSE)
+list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/DIA_ProteinNormalization/", recursive = TRUE,
+                            pattern = "\\.txt$", 
+                            full.names = TRUE)
+DIA_Protein_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
+                use.names = TRUE, idcol = "FileName")
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+
+```{r , echo = FALSE}
+
+```
+

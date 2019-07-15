@@ -8,7 +8,7 @@ output: pdf_document
 ```{r setup, echo=FALSE, warning=FALSE, message=FALSE}
 options(stringsAsFactors = F)
 library("RforProteomics")
-library("plyr")
+#library("plyr")
 library('MSstats', warn.conflicts = F, quietly = T, verbose = F)
 library("NormalyzerDE")
 library("knitr")
@@ -68,6 +68,7 @@ dda <- dda[which(!duplicated(dda[ , c("peptide", "condition", "species")])), ]
 
 ddaPep <- spread(dda, condition, intensity)
 #write.csv(ddaPep, "dda_peptide_wide.csv", row.names = F)
+#write.table(ddaPep, "dda_peptide_wide.tsv", row.names=FALSE, sep="\t", quote = FALSE)
 
 ddaPep <- read.csv("dda_peptide_wide.csv")
 ddaPep <- ddaPep %>% select(-quant)
@@ -81,17 +82,19 @@ out_dir = "C:/Users/Logan Wright/R Scripts/NormalyzerOutput/"
 normalyzer(
   jobName="DDA_PeptideNormalization",
   designPath="C:/Users/Logan Wright/DDA_Design_Matrix.txt", 
-  dataPath= "C:/Users/Logan Wright/R Scripts/dda_peptide_wide.csv",
+  dataPath= "C:/Users/Logan Wright/R Scripts/dda_peptide_wide.tsv",
   outputDir= out_dir,
   zeroToNA =TRUE,
   requireReplicates = FALSE)
 
 # Add Normalization identifier column and combine all text files
-list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/DDA_PeptideNormalization/", recursive = TRUE,
+list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/NormalyzerOutput/DDA_PeptideNormalization/", recursive = TRUE,
                             pattern = "\\.txt$", 
                             full.names = TRUE)
 DDA_Peptide_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
                 use.names = TRUE, idcol = "FileName")
+
+#write.csv(DDA_Peptide_Matrix, "DDA_Peptide_Matrix.csv", row.names = FALSE)
 ```
 
 ```{r DDA Protein Input, echo = FALSE}
@@ -132,6 +135,7 @@ dda <- dda[which(!duplicated(dda[ , c("protein", "condition", "species")])), ]
 ddaProt <- spread(dda, condition, intensity)
 
 #write.csv(ddaProt, "dda_protein_wide.csv", row.names = F)
+#write.table(ddaProt, "dda_protein_wide.tsv", row.names=FALSE, sep="\t", quote = FALSE)
 
 ddaProt <- read.csv("dda_protein_wide.csv")
 ddaProt <- ddaProt %>% select(-quant)
@@ -145,7 +149,7 @@ lddaProt <- lddaProt[which(lddaProt$intensity > 10), ]
 normalyzer(
   jobName="DDA_ProteinNormalization", 
   designPath="C:/Users/Logan Wright/DDA_Design_Matrix.txt",
-  dataPath="C:/Users/Logan Wright/R Scripts/dda_protein_wide.csv",
+  dataPath="C:/Users/Logan Wright/R Scripts/dda_protein_wide.tsv",
   outputDir="C:/Users/Logan Wright/R Scripts/",
   zeroToNA =TRUE,
   requireReplicates = FALSE)
@@ -155,6 +159,7 @@ list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/DDA_ProteinN
 DDA_Protein_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
                 use.names = TRUE, idcol = "FileName")
 
+#write.csv(DDA_Protein_Matrix, "DDA_Protein_Matrix.csv", row.names = FALSE)
 ```
 
 ```{r DIA Peptide Input, echo = FALSE}
@@ -186,6 +191,7 @@ dia <- dia[which(dia$ms2_peak > 1), ]
 diaPep <- spread(dia, condition, ms2_peak)
 
 #write.csv(diaPep, "dia_peptide_wide.csv", row.names = F)
+#write.table(diaPep, "dia_peptide_wide.tsv", row.names=FALSE, sep="\t", quote = FALSE)
 
 diaPep <- read.csv("dia_peptide_wide.csv")
 diaPep <- diaPep %>% select(-quant)
@@ -198,7 +204,7 @@ ldiaPep <- ldiaPep[which(ldiaPep$intensity > 10), ]
 normalyzer(
   jobName="DIA_PeptideNormalization",
   designPath="C:/Users/Logan Wright/DIA_Design_Matrix.txt", 
-  dataPath= "C:/Users/Logan Wright/R Scripts/dia_peptide_wide.csv",
+  dataPath= "C:/Users/Logan Wright/R Scripts/dia_peptide_wide.tsv",
   outputDir="C:/Users/Logan Wright/R Scripts/",
   zeroToNA =TRUE,
   requireReplicates = FALSE)
@@ -209,6 +215,8 @@ list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/DIA_PeptideN
                             full.names = TRUE)
 DIA_Peptide_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
                 use.names = TRUE, idcol = "FileName")
+
+#write.csv(DIA_Peptide_Matrix, "DIA_Peptide_Matrix.csv", row.names = FALSE)
 ```
 
 ```{r DIA Protein Input, echo = FALSE}
@@ -228,7 +236,9 @@ dia$condition <- do.call(paste, c(dia[,c("run", "condition", "quant")], sep = "_
 dia <- dia[,-2]
 diaProt <- spread(dia, condition, ms2_avg)
 
-# write.csv(diaProt, "dia_protein_wide.csv", row.names = F)
+#write.csv(diaProt, "dia_protein_wide.csv", row.names = F)
+#write.table(diaProt, "dia_protein_wide.tsv", row.names=FALSE, sep="\t", quote = FALSE)
+
 diaProt <- read.csv("dia_protein_wide.csv")
 diaProt <- diaProt %>% select(-quant)
 
@@ -241,7 +251,7 @@ ldiaProt <- ldiaProt[which(ldiaProt$intensity > 10), ]
 normalyzer(
   jobName="DIA_ProteinNormalization", 
   designPath="C:/Users/Logan Wright/DIA_Design_Matrix.txt",
-  dataPath="C:/Users/Logan Wright/R Scripts/dia_protein_wide.csv",
+  dataPath="C:/Users/Logan Wright/R Scripts/dia_protein_wide.tsv",
   outputDir="C:/Users/Logan Wright/R Scripts/",
   zeroToNA =TRUE,
   requireReplicates = FALSE)
@@ -250,13 +260,38 @@ list_of_files <- list.files(path = "C:/Users/Logan Wright/R Scripts/DIA_ProteinN
                             full.names = TRUE)
 DIA_Protein_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
                 use.names = TRUE, idcol = "FileName")
+
+#write.csv(DIA_Protein_Matrix, "DIA_Protein_Matrix.csv", row.names = FALSE)
 ```
 
-```{r , echo = FALSE}
+```{r DDA Peptide Matrix Spliting, echo = FALSE}
+
+input <- read.csv("DDA_Peptide_Matrix.csv")
+
+input$Normalization <- NA
+
+input[grep("log2", input$FileName), "Normalization"] <- "log2"
+input[grep("Cyc", input$FileName), "Normalization"] <- "CycLoess"
+input[grep("GI", input$FileName), "Normalization"] <- "Global"
+input[grep("mean", input$FileName), "Normalization"] <- "mean"
+input[grep("median", input$FileName), "Normalization"] <- "median"
+input[grep("Quantile", input$FileName), "Normalization"] <- "Quantile"
+input[grep("RLR", input$FileName), "Normalization"] <- "RLR"
+input[grep("VSN", input$FileName), "Normalization"] <- "VSN"
+
+#Remove raw data and FileName column
+input <- input[which(!is.na(input$Normalization)), ]
+input <- input[,-1]
+
+#Call main function for each Normalization and return AUC value and maybe 
+log <- main(input[which(input$Normalization == "log2"), ])
 
 ```
 
-```{r , echo = FALSE}
+```{r main function, echo = FALSE}
+main <- function(input) {
+  
+}
 
 ```
 

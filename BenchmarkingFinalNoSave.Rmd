@@ -8,20 +8,20 @@ output: pdf_document
 ```{r setup, echo=FALSE, warning=FALSE, message=FALSE}
 options(stringsAsFactors = F)
 library("RforProteomics")
-#library("plyr")
+library("plyr")
 library('MSstats', warn.conflicts = F, quietly = T, verbose = F)
 library("NormalyzerDE")
-library("knitr")
-library("foreach")
+#library("knitr")
+#library("foreach")
 library("genefilter")
 library(ROTS); library(data.table);
 library(SpikeInSubset); library(limma); library(PECA); library(readxl); 
 library(dplyr); library(tidyr); library(ggplot2); library(ggthemes); 
-library(printr); library(mratios); library(extrafont); library(qvalue)
+library(printr); library(mratios); library(extrafont); library(qvalue); library(cowplot);
+library(grid); library(gridExtra); library(data.table); library(DEqMS)
 knitr::opts_chunk$set(echo = TRUE)
 
-#install.packages("quantreg")
-#BiocManager::install("MSnbase")
+#BiocManager::install("DEqMS", dependencies = TRUE)
 ```
 
 ## R Markdown
@@ -32,28 +32,7 @@ When you click the **Knit** button a document will be generated that includes bo
 
 ```{r main function, echo = FALSE}
 min <- function(input, quant) {
-  inputLong <- gather(input, run, intensity, 4:19) %>% filter(!is.na(intensity))
-  a
-  inputLong$condition <- NA
-  inputLong[grep("1x", inputLong$run), "condition"] <- "1x"
-  inputLong[grep("2x", inputLong$run), "condition"] <- "2x"
-
-  inputLong$quant <- NA
-  inputLong[grep("dia", inputLong$run), "quant"] <- "DIA"
-  inputLong[grep("dda", inputLong$run), "quant"] <- "DDA"
-  
-  protein_counts <- inputLong %>% group_by(quant, condition, species) %>% 
-  summarize(count = length(unique(peptide)))
-
-  g <- ggplot(protein_counts, aes(x = condition, y = count, fill = species))
-  g <- g + geom_bar(stat = "identity") + facet_grid(. ~ quant)
-  g  + theme_pander(base_size = 19) + scale_fill_economist() + 
-    theme(text=element_text(size=19,family="serif")) + xlab("E. Coli spike-in ratio") + 
-    ylab("Peptide count") +  theme(axis.ticks = element_blank()) + 
-    theme(axis.title.y=element_text(margin=margin(0,20,0,0))) + 
-    theme(axis.title.x=element_text(margin=margin(20,0,0,0)))
-  AUC = 8
-  return(AUC)
+ 
 }
 
 ```
@@ -260,10 +239,17 @@ DIA_Peptide_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
 ```
 
 ```{r DIA Protein Input, echo = FALSE}
-dia <- read.csv("EQ_100915_Spectronaut_Protein.csv")
+dia <- read.csv("20190617_122759_EA100915_Benchmarkv2_Report.csv")
 #Rolled up on ms2 - avg
-dia <- dia[,c(1,2,4,8)]
-names(dia) <- c("condition", "run", "protein", "ms2_avg")
+dia <- dia[,c(1,2,6,7,11)]
+names(dia) <- c("condition", "run", "protein","peptide", "ms2_Total")
+
+for(i in 1:length(dia$ms2_Total)) {
+  if (dia[i,]$ms2_Total < 1) {
+   dia[i,]$ms2_Total = 0 
+  }
+}
+
 dia$species <- NA
 dia[grep("HUMAN", dia$protein), "species"] <- "human"
 dia[grep("ECOLI", dia$protein), "species"] <- "ecoli"
@@ -274,15 +260,21 @@ dia <- dia[which(!is.na(dia$species)), ]
 dia$quant <- "dia"
 dia$condition <- do.call(paste, c(dia[,c("run", "condition", "quant")], sep = "_"))
 dia <- dia[,-2]
-diaProt <- spread(dia, condition, ms2_avg)
+dia <- ddply(dia, .(protein,condition), numcolwise(mean,na.rm=TRUE))
+dia$species <- NA
+dia[grep("HUMAN", dia$protein), "species"] <- "human"
+dia[grep("ECOLI", dia$protein), "species"] <- "ecoli"
+dia$quant <- "dia"
+
+
+dia <- dia[which(dia$ms2_Total != 0), ]
+diaProt <- spread(dia, condition, ms2_Total)
 
 #write.csv(diaProt, "dia_protein_wide.csv", row.names = F)
 #write.table(diaProt, "dia_protein_wide.tsv", row.names=FALSE, sep="\t", quote = FALSE)
 
 diaProt <- read.csv("dia_protein_wide.csv")
 
-#Shows IDed protein counts across conditions
-counter(diaProt)
 diaProt <- diaProt %>% select(-quant)
 
 ldiaProt <- gather(diaProt, run, intensity, 3:18) %>% filter(!is.na(intensity))
@@ -309,7 +301,7 @@ DIA_Protein_Matrix <- rbindlist(sapply(list_of_files, fread, simplify = FALSE),
 
 ```{r DDA Peptide Matrix Spliting, ref.label = "main function", echo = FALSE}
 
-input <- read.csv("DIA_Peptide_Matrix.csv")
+input <- read.csv("DIA_Protein_Matrix.csv")
 
 input$Normalization <- NA
 
@@ -326,8 +318,8 @@ input[grep("VSN", input$FileName), "Normalization"] <- "VSN"
 input <- input[which(!is.na(input$Normalization)), ]
 input <- input[,-1]
 
-#Call main function for each Normalization and return AUC value and maybe
-log2 <- input[which(input$Normalization == "log2"), ]
+#par(mfrow = c(1,7))
+#Call main function for each Normalization and return AUC value and roc curve
 
 log <- main(input[which(input$Normalization == "log2"), ], input[1,]$quant)
 
@@ -344,10 +336,99 @@ Quantile <- main(input[which(input$Normalization == "Quantile"), ], input[1,]$qu
 RLR <- main(input[which(input$Normalization == "RLR"), ], input[1,]$quant)
 
 VSN <- main(input[which(input$Normalization == "VSN"), ], input[1,]$quant)
+
+
+# log <- rotTest(input[which(input$Normalization == "log2"), ], input[1,]$quant)
+# 
+# CycLoess <- rotTest(input[which(input$Normalization == "CycLoess"), ], input[1,]$quant)
+# 
+# Global <- rotTest(input[which(input$Normalization == "Global"), ], input[1,]$quant)
+# 
+# Mean <- rotTest(input[which(input$Normalization == "mean"), ], input[1,]$quant)
+# 
+# Median <- rotTest(input[which(input$Normalization == "median"), ], input[1,]$quant)
+# 
+# Quantile <- rotTest(input[which(input$Normalization == "Quantile"), ], input[1,]$quant)
+# 
+# RLR <- rotTest(input[which(input$Normalization == "RLR"), ], input[1,]$quant)
+# 
+# VSN <- rotTest(input[which(input$Normalization == "VSN"), ], input[1,]$quant)
+
+
+write.csv(log[[3]], "log2_modt_output.csv", row.names = TRUE)
+write.csv(Mean[[3]], "Mean_modt_output.csv", row.names = TRUE)
+write.csv(Median[[3]], "Median_modt_output.csv", row.names = TRUE)
+write.csv(Global[[3]], "Global_modt_output.csv", row.names = TRUE)
+write.csv(Quantile[[3]], "Quantile_modt_output.csv", row.names = TRUE)
+write.csv(CycLoess[[3]], "CycLoess_modt_output.csv", row.names = TRUE)
+write.csv(RLR[[3]], "RLR_modt_output.csv", row.names = TRUE)
+write.csv(VSN[[3]], "VSN_modt_output.csv", row.names = TRUE)
+
+t1 <- read.csv("DIA_Peptide_ROPECA/CycLoess_ROPECA_output.csv")
+ropecaConfusion(t1, "CycLoess")
+t1 <- read.csv("DIA_Peptide_ROPECA/log2_ROPECA_output.csv")
+ropecaConfusion(t1, "log2")
+t1 <- read.csv("DIA_Peptide_ROPECA/Mean_ROPECA_output.csv")
+ropecaConfusion(t1, "Mean")
+t1 <- read.csv("DIA_Peptide_ROPECA/Median_ROPECA_output.csv")
+ropecaConfusion(t1, "Median")
+t1 <- read.csv("DIA_Peptide_ROPECA/Global_ROPECA_output.csv")
+ropecaConfusion(t1, "Global")
+t1 <- read.csv("DIA_Peptide_ROPECA/RLR_ROPECA_output.csv")
+ropecaConfusion(t1, "RLR")
+t1 <- read.csv("DIA_Peptide_ROPECA/VSN_ROPECA_output.csv")
+ropecaConfusion(t1, "VSN")
+t1 <- read.csv("DIA_Peptide_ROPECA/Quantile_ROPECA_output.csv")
+ropecaConfusion(t1, "Quantile")
+
+rotsVis(VSN[[2]], 0.05)
+
+# group1 = c("EA100915_05_1x_dia", "EA100915_09_1x_dia", "EA100915_13_1x_dia", "EA100915_21_1x_dia", "EA100915_25_1x_dia", "EA100915_29_1x_dia", "EA100915_33_1x_dia", "EA100915_41_1x_dia")
+# 
+# group2 = c("EA100915_06_2x_dia", "EA100915_10_2x_dia", "EA100915_14_2x_dia", "EA100915_18_2x_dia", "EA100915_26_2x_dia", "EA100915_30_2x_dia", "EA100915_34_2x_dia", "EA100915_38_2x_dia")
+
+# results.RLRpr <- PECA_tsv("DIA_ProteinNormalization/RLR-normalized.txt", group1, group2, test = "modt", type = "tukey")
+# fpr <- length( which( results.RLRpr$p.fdr < 0.05 & results.RLRpr$p <0.05 ) )
+# fpr
+# 
+# results.cycpr <- PECA_tsv("DIA_ProteinNormalization/CycLoess-normalized.txt", group1, group2, test = "modt", type = "tukey")
+# fpr <- length( which( results.cycpr$p.fdr < 0.05 & results.cycpr$p <0.05 ) )
+# fpr
+# 
+# results.vsnpr <- PECA_tsv("DIA_ProteinNormalization/VSN-normalized.txt", group1, group2, test = "modt", type = "tukey")
+# fpr <- length( which( results.vsnpr$p.fdr < 0.05 & results.vsnpr$p <0.05 ) )
+# fpr
+
+# layout(matrix(c(1,2,3,4,5,6,7,8), nrow = 1, ncol = 8, byrow = TRUE))
+# 
+# plot(log[[2]], main = 1)
+# plot(CycLoess[[2]]
+# plot(Quantile[[2]])
+# plot(RLR[[2]])
+# plot(VSN[[2]]), main = 2)
+# plot(Global[[2]])
+# plot(Mean[[2]])
+# plot(Median[[2]])
+
+#Visualization Code
+#grid.arrange(as.grob(log[[2]]), as.grob(CycLoess[[2]]), as.grob(Global[[2]]), as.grob(Mean[[2]]), as.grob(Median[[2]]), as.grob(RLR[[2]]), as.grob(VSN[[2]]), nrow=1)
+
+#grid.arrange(log[[2]], (CycLoess[[2]]),(Global[[2]]), (Mean[[2]]), (Median[[2]]), (RLR[[2]]), (VSN[[2]]), widths = c(1,1,1,1,1,1,1), ncol=7, layout_matrix = rbind(c(1,1,1,1,1,1,1),
+#                                                 c(2,2,2,2,2,2,2),
+#                                                 c(3,3,3,3,3,3,3),
+#                                                 c(4,4,4,4,4,4,4),
+#                                                 c(5,5,5,5,5,5,5),
+#                                                 c(6,6,6,6,6,6,6),
+#                                                 c(7,7,7,7,7,7,7)))
+
+summary(log[[2]], fdr = 0.05)
+#plot_grid(log[[2]], (CycLoess[[2]]),(Global[[2]]), (Mean[[2]]), (Median[[2]]), (RLR[[2]]), (VSN[[2]]), align = "v",ncol = 7, nrow = 1, rel_heights = c(1/16, 1/16, 1/16, 1/16, 1/16, 1/16, 1/16))
+
 ```
 
 ```{r main function, echo = TRUE}
 main <- function(input, quant) {
+  
   inputLong <- gather(input, run, intensity, 4:19) %>% filter(!is.na(intensity))
   
   inputLong$condition <- NA
@@ -358,110 +439,201 @@ main <- function(input, quant) {
   inputLong[grep("dia", inputLong$run), "quant"] <- "DIA"
   inputLong[grep("dda", inputLong$run), "quant"] <- "DDA"
   
-  #protein_counts <- inputLong %>% group_by(quant, condition, species) %>% 
-  #summarize(count = length(unique(peptide)))
+  if (colnames(input)[1] == "protein")   {    
+    protein_counts <- inputLong %>% group_by(quant, condition, species) %>%
+    summarize(count = length(unique(protein)))
+  }
+  
+  if (colnames(input)[1] == "peptide")   {    
+    protein_counts <- inputLong %>% group_by(quant, condition, species) %>%
+    summarize(count = length(unique(peptide)))
+  }
 
   #g <- ggplot(protein_counts, aes(x = condition, y = count, fill = species))
   #g <- g + geom_bar(stat = "identity") + facet_grid(. ~ quant)
-  #plot(g  + theme_pander(base_size = 19) + scale_fill_economist() + 
-  #  theme(text=element_text(size=19,family="serif")) + xlab("E. Coli spike-in ratio") + 
-  #  ylab("Peptide count") +  theme(axis.ticks = element_blank()) + 
-  #  theme(axis.title.y=element_text(margin=margin(0,20,0,0))) + 
+  #plot(g  + theme_pander(base_size = 19) + scale_fill_economist() +
+  #  theme(text=element_text(size=19,family="serif")) + xlab("E. Coli spike-in ratio") +
+  #  ylab("Peptide count") +  theme(axis.ticks = element_blank()) +
+  #  theme(axis.title.y=element_text(margin=margin(0,20,0,0))) +
   #  theme(axis.title.x=element_text(margin=margin(20,0,0,0))))
-  
+
       #t-test
-      # HU_1x <- inputLong %>% filter(species == "human", condition == "1x") %>%
-      # select(intensity) %>% unlist
-      # HU_2x <- inputLong %>% filter(species == "human", condition == "2x") %>%
-      # select(intensity) %>% unlist
-      # 
-      # 
-      # EC_1x <- inputLong %>% filter(species == "ecoli", condition == "1x") %>%
-      # select(intensity) %>% unlist
-      # EC_2x <- inputLong %>% filter(species == "ecoli", condition == "2x") %>%
-      # select(intensity) %>% unlist
-      # 
-      # 
-      # HU <- t.test(HU_1x, HU_2x)
-      # EC <- t.test(EC_1x, EC_2x)
-      # 
-      # group_means <- inputLong %>% group_by(species, quant, condition) %>% 
-      # summarize(mean = mean(intensity)) %>% spread(condition, mean)
-      # 
-      # names(group_means)[3:4] <- c("1x Mean", "2x Mean")
-      # 
-      # 
-      # overall <- inputLong %>% group_by(species, quant) %>% summarize(count = n()) %>% select(-count)
-      # 
-      # overall$p.value <- c(EC$p.value, HU$p.value)
-      # 
-      # overall <- merge(overall, group_means)
-      # names(overall)[1:3] <- c("Species", "Quantitation", "P-value")
-      # 
-      # overall$Ratio <- overall[, "2x Mean"] / overall[, "1x Mean"]
-      # 
-      # 
-      # overall$lower <- NA
-      # overall$upper <- NA
-      # 
-      # HU_ratio <- ttestratio(HU_2x, HU_1x)
-      # EC_ratio <- ttestratio(EC_2x, EC_1x)
-      # 
-      # overall[1, "lower"] <- EC_ratio$conf.int[[1]]
-      # overall[1, "upper"] <- EC_ratio$conf.int[[2]]
-      # 
-      # 
-      # overall[2, "lower"] <- HU_ratio$conf.int[[1]]
-      # overall[2, "upper"] <- HU_ratio$conf.int[[2]]
-      # 
-      # overall$expected_ratio <- c(2,1)
-      # 
+       HU_1x <- inputLong %>% filter(species == "human", condition == "1x") %>%
+       select(intensity) %>% unlist
+       HU_2x <- inputLong %>% filter(species == "human", condition == "2x") %>%
+       select(intensity) %>% unlist
+      
+      
+       EC_1x <- inputLong %>% filter(species == "ecoli", condition == "1x") %>%
+       select(intensity) %>% unlist
+       EC_2x <- inputLong %>% filter(species == "ecoli", condition == "2x") %>%
+       select(intensity) %>% unlist
+      
+      
+       HU <- t.test(HU_1x, HU_2x)
+       EC <- t.test(EC_1x, EC_2x)
+      
+       group_means <- inputLong %>% group_by(species, quant, condition) %>%
+       summarize(mean = mean(intensity)) %>% spread(condition, mean)
+      
+       names(group_means)[3:4] <- c("1x Mean", "2x Mean")
+      
+      
+       overall <- inputLong %>% group_by(species, quant) %>% summarize(count = n()) %>% select(-count)
+      
+       overall$p.value <- c(EC$p.value, HU$p.value)
+      
+       overall <- merge(overall, group_means)
+       names(overall)[1:3] <- c("Species", "Quantitation", "P-value")
+      
+       overall$Ratio <- overall[, "2x Mean"] / overall[, "1x Mean"]
+      
+      
+       overall$lower <- NA
+       overall$upper <- NA
+      
+       HU_ratio <- ttestratio(HU_2x, HU_1x)
+       EC_ratio <- ttestratio(EC_2x, EC_1x)
+      
+       overall[1, "lower"] <- EC_ratio$conf.int[[1]]
+       overall[1, "upper"] <- EC_ratio$conf.int[[2]]
+      
+      
+       overall[2, "lower"] <- HU_ratio$conf.int[[1]]
+       overall[2, "upper"] <- HU_ratio$conf.int[[2]]
+      
+       overall$expected_ratio <- c(2,1)
+      
       # g <- ggplot(overall, aes(x = Quantitation, y = log2(Ratio)))
-      # plot(g + geom_point(size = 2) + facet_grid(. ~ Species) + 
-      # geom_errorbar(aes(x = Quantitation, ymax = log2(upper), ymin = log2(lower)), 
-      # width = 0.2) + 
+      # plot(g + geom_point(size = 2) + facet_grid(. ~ Species) +
+      # geom_errorbar(aes(x = Quantitation, ymax = log2(upper), ymin = log2(lower)),
+      # width = 0.2) +
       # geom_point(aes(x = Quantitation, y = log2(expected_ratio)), colour = "blue", size = 3) +
       # theme_pander(base_size = 19) + scale_colour_economist() +
       # theme(text=element_text(size=19,family="serif")) +
-      # theme(axis.ticks = element_blank()) + 
-      # theme(axis.title.y=element_text(margin=margin(0,20,0,0))) + 
-      # theme(axis.title.x=element_text(margin=margin(20,0,0,0))) + 
-      # labs(y=expression(Log[2]*Ratio), x = "") + 
+      # theme(axis.ticks = element_blank()) +
+      # theme(axis.title.y=element_text(margin=margin(0,20,0,0))) +
+      # theme(axis.title.x=element_text(margin=margin(20,0,0,0))) +
+      # labs(y=expression(Log[2]*Ratio), x = "") +
       # scale_y_continuous(breaks=seq(-0.2,1.0,0.2)))
-      # 
-      # 
+      #
+      #
       # overall <- overall %>% select(-expected_ratio)
       # overall
-      # 
-  ttest_data <- inputLong %>% group_by(species, quant, peptide) %>% do(
-    ttest = {
-      one <- .[which(.[,"condition"] == "1x"),]
-      one <- one$intensity
-      
-      two <- .[which(.[,"condition"] == "2x"),]
-      two <- two$intensity
-      
-      if(length(one) > 1 && length(two) > 1) {
-        data_ratio <- ttestratio(two, one)
+      #
+   if (colnames(input)[1] == "protein")   {    
+     ttest_data <- inputLong %>% group_by(species, quant, protein) %>% do(
+       ttest = {
+         one <- .[which(.[,"condition"] == "1x"),]
+         one <- one$intensity
+         
+         two <- .[which(.[,"condition"] == "2x"),]
+         two <- two$intensity
+         
+         if(length(one) > 1 && length(two) > 1) {
+           data_ratio <- ttestratio(two, one)
+           
+           lower <- data_ratio$conf.int[[1]]
+           upper <- data_ratio$conf.int[[2]]
+           ratio <- data_ratio$estimate[[3]]
+           pratio <- data_ratio$p.value[[1]]
+       
+           paste(ratio, pratio, lower, upper, sep = " ")
+         
+           }
+         
+         else(NA) 
+         
+         }
+       )
+   }
         
-        lower <- data_ratio$conf.int[[1]]
-        upper <- data_ratio$conf.int[[2]]
-        ratio <- data_ratio$estimate[[3]]
-        pratio <- data_ratio$p.value[[1]]
-    
-        paste(ratio, pratio, lower, upper, sep = " ")
-      
-        }
-      
-      else(NA) 
-      
-      }
-    )
-  
-  ttest_data <- ttest_data %>% filter(!is.na(ttest)) %>% 
+   if (colnames(input)[1] == "peptide")   {    
+     ttest_data <- inputLong %>% group_by(species, quant, peptide) %>% do(
+       ttest = {
+         one <- .[which(.[,"condition"] == "1x"),]
+         one <- one$intensity
+         
+         two <- .[which(.[,"condition"] == "2x"),]
+         two <- two$intensity
+         
+         if(length(one) > 1 && length(two) > 1) {
+           data_ratio <- ttestratio(two, one)
+           
+           lower <- data_ratio$conf.int[[1]]
+           upper <- data_ratio$conf.int[[2]]
+           ratio <- data_ratio$estimate[[3]]
+           pratio <- data_ratio$p.value[[1]]
+       
+           paste(ratio, pratio, lower, upper, sep = " ")
+         
+           }
+         
+         else(NA) 
+         
+         }
+       )
+   }
+  ttest_data <- ttest_data %>% filter(!is.na(ttest)) %>%
     separate(ttest, c("ratio", "p.value", "lower", "upper"), " ", convert = TRUE)
+
+  ttest_data <- ttest_data %>% filter(!is.na(upper), !is.na(lower), !is.na(p.value))
   
-  ttest_data <- ttest_data %>% filter(!is.na(upper), !is.na(lower), !is.na(p.value)) 
+  
+  #  Limma moderated t-test
+  limMatrix <- input[-2:-3] 
+  namaste <- limMatrix[,1]
+  rownames(limMatrix) <-namaste
+  limMatrix <- limMatrix[-18]
+  limMatrix <- limMatrix[-1]
+  designer <- read.delim("lmfit_design_matrix.txt", row.names=1)
+  limmer <- lmFit(limMatrix, designer)
+  
+  #  Moderated t-statistic
+  outLimma <- eBayes(limmer,proportion=0.17,stdev.coef.lim=c(0.1,4))
+  elim <- qqt(outLimma$t,df=outLimma$df.prior+outLimma$df.residual,main="Moderated t")
+  abline(0,1)
+  #  Points off the line may be differentially expressed
+  par(mfrow=c(1,1))
+  
+
+  group1 <- NA
+  group2 <- NA
+
+  if (quant=="dia") {
+    group1 = c("EA100915_05_1x_dia", "EA100915_09_1x_dia", "EA100915_13_1x_dia", "EA100915_21_1x_dia", "EA100915_25_1x_dia", "EA100915_29_1x_dia", "EA100915_33_1x_dia", "EA100915_41_1x_dia")
+
+    group2 = c("EA100915_06_2x_dia", "EA100915_10_2x_dia", "EA100915_14_2x_dia", "EA100915_18_2x_dia", "EA100915_26_2x_dia", "EA100915_30_2x_dia", "EA100915_34_2x_dia", "EA100915_38_2x_dia")
+  }
+
+  if (quant=="dda") {
+    group1 = c("EA100915_03_1x_dda", "EA100915_11_1x_dda", "EA100915_15_1x_dda", "EA100915_19_1x_dda", "EA100915_23_1x_dda", "EA100915_31_1x_dda", "EA100915_35_1x_dda", "EA100915_39_1x_dda")
+
+    group2 = c("EA100915_04_2x_dda", "EA100915_08_2x_dda", "EA100915_16_2x_dda", "EA100915_20_2x_dda", "EA100915_24_2x_dda", "EA100915_28_2x_dda	", "EA100915_36_2x_dda", "EA100915_40_2x_dda")
+  }
+
+   peca <- NA
+  # ROPECA #
+  if(colnames(input)[1] == "peptide") {
+    pecaDat <- input[,-20]
+    pecaDat$peptide <-paste(pecaDat$peptide,pecaDat$species)
+    pecaDat <- pecaDat[,-2]
+    pecaDat <- pecaDat[,-2]
+    peca <- PECA_df(df = pecaDat, id = "peptide", samplenames1= group1, samplenames2= group2, normalize = FALSE, test = "rots", type = "median", progress = TRUE, paired = FALSE)
+  }
+
+   rots <- NA
+  # Rots #
+  if (colnames(input)[1] == "protein") {
+    rotGroups <- c(0,1,1,0,0,1,0,1,0,1,1,0,0,1,0,1)
+    rotD <- input[,-20]
+    rotD <- rotD[,-2]
+    rotD <- rotD[,-2]
+    rotDat <- rotD[,-1]
+    rownames(rotDat) <- rotD[,1]
+    rots <- ROTS(data = rotDat, groups = rotGroups, B = 1000, K = 5000)
+    summary(rots, fdr =0.05)
+  }
   
   #P value Confusion Matrix
   confusionPTable <- data.frame("key" = character(0), "value" = numeric(0))
@@ -646,7 +818,7 @@ main <- function(input, quant) {
   width = diff(fpr)
   
   AUC <- sum(height*width)
-  return(list(AUC, roc))
+  return(list(peca,rots,elim,ttest_data,AUC,roc))
 }
 
 ```
@@ -677,20 +849,220 @@ main <- function(input, quant) {
 
 ```
 
-```{r , echo = FALSE}
+```{r ROTS Visualization, echo = FALSE}
 
+rotsVis <- function(rotIn, pval) {
+  summary(rotIn, fdr = pval)
+  plot(rotIn, fdr = pval, type = "volcano")
+  plot(rotIn, fdr = pval, type = "ma")
+  plot(rotIn, fdr = pval, type = "reproducibility")  
+  plot(rotIn, fdr = pval, type = "pvalue")
+  #plot(rotIn, fdr = pval, type = "pca")
+  plot(rotIn, fdr = pval, type = "heatmap")
+
+
+    
+
+}
 ```
 
-```{r , echo = FALSE}
-
+```{r rotTest, echo = FALSE}
+rotTest <- function(input, quant) {
+    group1 <- NA
+    group2 <- NA
+    
+    if (quant=="dia") {
+      group1 = c("EA100915_05_1x_dia", "EA100915_09_1x_dia", "EA100915_13_1x_dia", "EA100915_21_1x_dia", "EA100915_25_1x_dia", "EA100915_29_1x_dia", "EA100915_33_1x_dia", "EA100915_41_1x_dia")
+  
+      group2 = c("EA100915_06_2x_dia", "EA100915_10_2x_dia", "EA100915_14_2x_dia", "EA100915_18_2x_dia", "EA100915_26_2x_dia", "EA100915_30_2x_dia", "EA100915_34_2x_dia", "EA100915_38_2x_dia") 
+    }
+    
+    if (quant=="dda") {
+      group1 = c("EA100915_03_1x_dda", "EA100915_11_1x_dda", "EA100915_15_1x_dda", "EA100915_19_1x_dda", "EA100915_23_1x_dda", "EA100915_31_1x_dda", "EA100915_35_1x_dda", "EA100915_39_1x_dda")
+      
+      group2 = c("EA100915_04_2x_dda", "EA100915_08_2x_dda", "EA100915_16_2x_dda", "EA100915_20_2x_dda", "EA100915_24_2x_dda", "EA100915_28_2x_dda	", "EA100915_36_2x_dda", "EA100915_40_2x_dda")
+    }
+    peca <- NA
+  # ROPECA #
+  if(colnames(input)[1] == "peptide") {
+    pecaDat <- input[,-20]
+    pecaDat$peptide <-paste(pecaDat$peptide,pecaDat$species)
+    pecaDat <- pecaDat[,-2]
+    pecaDat <- pecaDat[,-2]
+    peca <- PECA_df(df = pecaDat, id = "peptide", samplenames1= group1, samplenames2= group2, normalize     = FALSE, test = "rots", type = "median", progress = TRUE, paired = FALSE)
+  }
+  
+  rots <- NA
+  # Rots #
+  if (colnames(input)[1] == "protein") {
+    rotGroups <- c(0,1,1,0,0,1,0,1,0,1,1,0,0,1,0,1)
+    rotD <- input[,-20]
+    rotD <- rotD[,-2]
+    rotD <- rotD[,-2]
+    rotDat <- rotD[,-1]
+    rownames(rotDat) <- rotD[,1]
+    rots <- ROTS(data = rotDat, groups = rotGroups, B = 2000, K = 10000)
+    summary(rots, fdr =0.05)
+  }
+  return(list(peca,rots))
+}
 ```
 
-```{r , echo = FALSE}
+```{r Ropeca Confusion Matrix, echo = FALSE}
+ropecaConfusion <- function(input, Norm) {
+  if(is.null(input$X)) {
+    input <- tibble::rownames_to_column(input, "peptide")
+    input$species <- NA
+    input[grep("ecoli", input$peptide), "species"] <- "ecoli"
+    input[grep("human", input$peptide), "species"] <- "human"
+  }
+  if(is.null(input$species)) {
+    input$species <- NA
+    input[grep("ecoli", input$X), "species"] <- "ecoli"
+    input[grep("human", input$X), "species"] <- "human"
+  }
+ confusionQTable <- data.frame("key" = character(0), "value" = numeric(0))
+  
+  # True positives DDA
+  confusionQTable[1,1] <- "True positives"
+  confusionQTable[1,2] <- 
+    nrow(input %>% filter(species == "ecoli", p.fdr < 0.05))
+  
+  
+  # False negatives DDA
+  confusionQTable[2,1] <- "False negatives"
+  confusionQTable[2,2] <-
+    nrow(input %>% filter(species == "ecoli", p.fdr >= 0.05))
+  
+  # False positives DDA
+  confusionQTable[3,1] <- "False positives"
+  confusionQTable[3,2] <- 
+    nrow(input %>% filter(species == "human", p.fdr < 0.05))
+  
+  
+  # True negatives DDA
+  confusionQTable[4,1] <- "True negatives"
+  confusionQTable[4,2] <- 
+    nrow(input %>% filter(species == "human", p.fdr >= 0.05))
+  
+  # E. Coli proteins
+  confusionQTable[5,1] <- "Condition positive"
+  confusionQTable[5,2] <- nrow(input %>% filter(species == "ecoli"))
+  
+  # Human proteins
+  confusionQTable[6,1] <- "Condition negative"
+  confusionQTable[6,2] <- nrow(input %>% filter(species == "human"))
+  
+  # P < 0.05
+  confusionQTable[7,1] <- "Predicted condition positive"
+  confusionQTable[7,2] <- nrow(input %>% filter(p.fdr < 0.05))
+  
+  # P >= 0.05
+  confusionQTable[8,1] <- "Predicted condition negative"
+  confusionQTable[8,2] <- nrow(input %>% filter(p.fdr >= 0.05))
+  
+  # Total population
+  confusionQTable[9,1] <- "Total population"
+  confusionQTable[9,2] <- nrow(input)
+  
+  # Accuracy
+  confusionQTable[10,1] <- "Accuracy"
+  confusionQTable[10,2] <- (confusionQTable[1,2] + confusionQTable[4,2]) / confusionQTable[9,2]
+  
+  # Prevalence
+  confusionQTable[11,1] <- "Prevalence"
+  confusionQTable[11,2] <- confusionQTable[5,2] / confusionQTable[9,2]
+  
+  # False positive rate
+  confusionQTable[12,1] <- "False positive rate"
+  confusionQTable[12,2] <- confusionQTable[3,2] / confusionQTable[6,2]
+  
+  # True positive rate
+  confusionQTable[13,1] <- "True positive rate"
+  confusionQTable[13,2] <- confusionQTable[1,2] / confusionQTable[5,2]
+  
+  # False negative rate
+  confusionQTable[14,1] <- "False negative rate"
+  confusionQTable[14,2] <- confusionQTable[2,2] / confusionQTable[5,2]
+  
+  # True negative rate
+  confusionQTable[15,1] <- "True negative rate"
+  confusionQTable[15,2] <- confusionQTable[4,2] / confusionQTable[6,2]
+  
 
+  tab <- "ROPECA Confusion Table"
+  print(knitr::kable(confusionQTable, caption = paste(Norm, tab, sep = " "), digits = 2))
+  
+  #Generate ROC curve
+  input$changing <- TRUE
+  input[which(ttest_data$species == "human"), "changing"] <- FALSE
+  
+  max(ttest_data$q.value)
+  x <- seq(0.0, 1.0, 0.01)
+  
+  fpr <- c()
+  tpr <- c()
+  
+  cp <- length(which(ttest_data$changing))
+  cn <- length(which(!ttest_data$changing))
+  for(i in 1:length(x)) {
+    ttest_data$test <- FALSE
+    ttest_data[which(ttest_data$q.value < x[i]),"test"] <- TRUE
+    
+    tpr[i] <- length(which(ttest_data$changing & ttest_data$test)) / cp
+    fpr[i] <- length(which(!ttest_data$changing & ttest_data$test)) / cn
+  }
+  
+  data_roc <- data.frame("threshold" = x, "tpr" = tpr, "fpr" = fpr)
+  
+  g  <- ggplot(data_roc, aes(x = fpr, y = tpr, colour = threshold))
+  roc <- plot(g + geom_point() + geom_line() + 
+    theme_pander(base_size = 19) + scale_fill_economist() +
+    theme(text=element_text(size=19,family="serif")) +
+    theme(axis.ticks = element_blank()) + 
+    theme(axis.title.y=element_text(margin=margin(0,20,0,0))) + 
+    theme(axis.title.x=element_text(margin=margin(20,0,0,0))) + 
+    labs(x="False positive rate", y = "True positive rate") + 
+    ggtitle(paste(input[1,]$Normalization)))
+  
+  height = (tpr[-1]+tpr[-length(tpr)])/2
+  width = diff(fpr)
+  
+  AUC <- sum(height*width)
+}
 ```
 
-```{r , echo = FALSE}
+```{r Tech rep power Calc, echo = FALSE}
+    repPower <- function(input, fdr, num, effect, pow) {
+      pwr.2p.test(h = effect, n = num, sig.level = fdr, power = pow, 
+        alternative = c("two.sided","less","greater"))
+      
+      #data = read.table("--------", sep="\t",header=T);
+      data = input
+      # If you wish to change the significance level, change it here:
+      significance=fdr
+      power <- array(dim=c(length(data[,1]),6));
+      
+      colNames=c("Peptide","Protein","Effect Size","Power","P value","Fold Change");
+      colnames(power)=colNames;
+      
+      power[,5]=data[,3];
+      power[,6]=data[,4];
+      data[,4]=abs(data[,4])-1;
+      power[,1]=as.character(data[,1]);
+      power[,2]=as.character(data[,2]);
+      power[,3]=data[,4]/(data[,5]);
+      for (i in 1:length(data[,1])) {
+      	result <- pwr.2p2n.test(h=as.numeric(power[i,3]), sig.level=data[i,3], power=NULL,
+      	               n1=data[i,6], n2=data[i,7]);
+      	power[i,4] <- result$power;
+      
+      }
+      # The columns are: 1 peptide name, 2 protein name, 3 effect size, 4 power.
+      #write.table(power, "--------", sep="\t");
 
+
+    }
 ```
 
 ```{r , echo = FALSE}

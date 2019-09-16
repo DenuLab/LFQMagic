@@ -16,14 +16,14 @@ library('MSstats', warn.conflicts = F, quietly = T, verbose = F)
 #library("foreach")
 library("genefilter")
 library(ROTS); library(data.table);
-library(SpikeInSubset); library(limma); library(PECA); library(readxl); 
-library(dplyr); library(tidyr); library(ggplot2); library(ggthemes); 
+library(SpikeInSubset); library(limma); library(PECA); library(readxl); library(ztable)
+library(dplyr); library(tidyr); library(ggplot2); library(ggthemes); library(RankProd)
 library(printr); library(mratios); library(extrafont); library(qvalue); library(cowplot);
-library(grid); library(gridExtra); library(data.table); library(DEqMS); library(gtable)
+library(grid); library(gridExtra); library(data.table); library(DEqMS); library(gtable);
 knitr::opts_chunk$set(echo = TRUE)
 
-#install.packages("gtable")
-#BiocManager::install("DEqMS", dependencies = TRUE)
+#install.packages("ztable")
+#BiocManager::install("RankProd", dependencies = TRUE)
 ```
 
 ## R Markdown
@@ -354,19 +354,20 @@ input <- read.csv("DDA_Peptide_Matrix.csv")
 #Call main function for each Normalization and return AUC value and roc curve
 
 
-pdf(file = "DIA_09_10_19.pdf")
+pdf(file = "DIA_Peptide_Protein_09_13_19.pdf")
 
 input <- read.csv("dia_protein_wide.csv")
-out1 <- main(input, input$quant[1], length(colnames(input)), 0.05)
+out1 <- main(input, "protein", input$quant[1], length(colnames(input)), 0.05)
 
 input <- read.csv("dia_protein_wide_R4.csv")
-out2 <- main(input, input$quant[1], length(colnames(input)), 0.05)
+out2 <- main(input, "protein", input$quant[1], length(colnames(input)), 0.05)
+
 
 input <- read.csv("dia_peptide_wide.csv")
-out3 <- main(input, input$quant[1], length(colnames(input)), 0.05)
+out3 <- main(input, "peptide", input$quant[1], length(colnames(input)), 0.05)
 
 input <- read.csv("dia_peptide_wide_R4.csv")
-out4 <- main(input, input$quant[1], length(colnames(input)), 0.05)
+out4 <- main(input, "peptide", input$quant[1], length(colnames(input)), 0.05)
 
 dev.off
 
@@ -390,7 +391,6 @@ RLR <- main(input[which(input$Normalization == "RLR"), ], input[1,]$quant)
 VSN <- main(input[which(input$Normalization == "VSN"), ], input[1,]$quant)
 
 input <-  input[which(input$Normalization == "log2"), ]
-
 
 
 
@@ -502,24 +502,32 @@ summary(log[[2]], fdr = 0.05)
 
 
 ```{r main function, echo = TRUE}
-main <- function(input, quant, cols, fdr) {
+main <- function(input, dataType, quant, cols, fdr) {
   
-  inputLong <- gather(input, run, intensity, 4:cols) %>% filter(!is.na(intensity))
+  if (dataType == "protein")   {
+    inputLong <- gather(input, run, intensity, 4:cols) %>% filter(!is.na(intensity))
+    inputLong$condition <- NA
+    inputLong[grep("1x", inputLong$run), "condition"] <- "1x"
+    inputLong[grep("2x", inputLong$run), "condition"] <- "2x"
   
-  inputLong$condition <- NA
-  inputLong[grep("1x", inputLong$run), "condition"] <- "1x"
-  inputLong[grep("2x", inputLong$run), "condition"] <- "2x"
-
-  inputLong$quant <- NA
-  inputLong[grep("dia", inputLong$run), "quant"] <- "DIA"
-  inputLong[grep("dda", inputLong$run), "quant"] <- "DDA"
+    inputLong$quant <- NA
+    inputLong[grep("dia", inputLong$run), "quant"] <- "DIA"
+    inputLong[grep("dda", inputLong$run), "quant"] <- "DDA"
   
-  if (colnames(input)[1] == "protein")   {    
     protein_counts <- inputLong %>% group_by(quant, condition, species) %>%
     summarize(count = length(unique(protein)))
   }
   
-  if (colnames(input)[1] == "peptide")   {    
+  if (dataType == "peptide")   {  
+    inputLong <- gather(input, run, intensity, 5:cols) %>% filter(!is.na(intensity))
+    inputLong$condition <- NA
+    inputLong[grep("1x", inputLong$run), "condition"] <- "1x"
+    inputLong[grep("2x", inputLong$run), "condition"] <- "2x"
+  
+    inputLong$quant <- NA
+    inputLong[grep("dia", inputLong$run), "quant"] <- "DIA"
+    inputLong[grep("dda", inputLong$run), "quant"] <- "DDA"
+  
     protein_counts <- inputLong %>% group_by(quant, condition, species) %>%
     summarize(count = length(unique(peptide)))
   }
@@ -593,56 +601,56 @@ main <- function(input, quant, cols, fdr) {
       overall <- overall %>% select(-expected_ratio)
       overall
 
-   if (colnames(input)[1] == "protein")   {    
+   if (dataType == "protein")   {
      ttest_data <- inputLong %>% group_by(species, quant, protein) %>% do(
        ttest = {
          one <- .[which(.[,"condition"] == "1x"),]
          one <- one$intensity
-         
+
          two <- .[which(.[,"condition"] == "2x"),]
          two <- two$intensity
-         
+
          if(length(one) > 1 && length(two) > 1) {
            data_ratio <- ttestratio(two, one)
-           
+
            lower <- data_ratio$conf.int[[1]]
            upper <- data_ratio$conf.int[[2]]
            ratio <- data_ratio$estimate[[3]]
            pratio <- data_ratio$p.value[[1]]
-       
+
            paste(ratio, pratio, lower, upper, sep = " ")
-         
+
            }
-         
-         else(NA) 
-         
+
+         else(NA)
+
          }
        )
    }
-        
-   if (colnames(input)[1] == "peptide")   {    
+
+   if (dataType == "peptide")   {
      ttest_data <- inputLong %>% group_by(species, quant, peptide) %>% do(
        ttest = {
          one <- .[which(.[,"condition"] == "1x"),]
          one <- one$intensity
-         
+
          two <- .[which(.[,"condition"] == "2x"),]
          two <- two$intensity
-         
+
          if(length(one) > 1 && length(two) > 1) {
            data_ratio <- ttestratio(two, one)
-           
+
            lower <- data_ratio$conf.int[[1]]
            upper <- data_ratio$conf.int[[2]]
            ratio <- data_ratio$estimate[[3]]
            pratio <- data_ratio$p.value[[1]]
-       
+
            paste(ratio, pratio, lower, upper, sep = " ")
-         
+
            }
-         
-         else(NA) 
-         
+
+         else(NA)
+
          }
        )
    }
@@ -650,58 +658,82 @@ main <- function(input, quant, cols, fdr) {
     separate(ttest, c("ratio", "p.value", "lower", "upper"), " ", convert = TRUE)
 
   ttest_data <- ttest_data %>% filter(!is.na(upper), !is.na(lower), !is.na(p.value))
-  
-  
+
+
   elim <-NA
   outLimma <-NA
-  # if (colnames(input)[1] == "peptide")   {
-  #   #  Limma moderated t-test
-  #   limMatrix <- input[-2:-3]
-  #   namaste <- limMatrix[,1]
-  #   rownames(limMatrix) <-namaste
-  #   limMatrix <- limMatrix[-18]
-  #   limMatrix <- limMatrix[-1]
-  #   designer <- read.delim("lmfit_design_matrix.txt", row.names=1)
-  #   limmer <- lmFit(limMatrix, designer)
-  # 
-  #   #  Moderated t-statistic
-  #   outLimma <- eBayes(limmer,proportion=0.17,stdev.coef.lim=c(0.1,4))
-  #   elim <- qqt(outLimma$t,df=outLimma$df.prior+outLimma$df.residual,main="Moderated t")
-  #   abline(0,1)
-  #   #  Points off the line may be differentially expressed
-  #   par(mfrow=c(1,1))
-  # }
-  # 
-  # if (colnames(input)[1] == "protein")   {
-  #   #  Limma moderated t-test
-  #   limMatrix <- input[-2:-3]
-  #   namaste <- limMatrix[,1]
-  #   rownames(limMatrix) <-namaste
-  #   limMatrix <- limMatrix[-18]
-  #   limMatrix <- limMatrix[-1]
-  #   designer <- read.delim("lmfit_design_matrix.txt", row.names=1)
-  #   limmer <- lmFit(limMatrix, designer)
-  # 
-  #   #  Moderated t-statistic
-  #   outLimma <- eBayes(limmer,proportion=0.17,stdev.coef.lim=c(0.1,4))
-  #   elim <- qqt(outLimma$t,df=outLimma$df.prior+outLimma$df.residual,main="Moderated t")
-  #   abline(0,1)
-  #   #  Points off the line may be differentially expressed
-  #   par(mfrow=c(1,1))
-  # }
+  namaste <- data.frame()
+  if (dataType == "peptide" & quant == "dia")   {
+    #  Limma moderated t-test
+    limMatrix <- input[-3:-4]
+    for (i in 1:length(limMatrix[,1])) {
+       namaste[i,1] <- paste(limMatrix[i,1], limMatrix[i,2])
+    }
+    rownames(limMatrix) <-namaste[,1]
+    limMatrix <- limMatrix[,-1:-2]
+    designer <- read.delim("lmfit_design_matrix.txt", row.names=1)
+     if (cols == 12) {
+       designer <- designer[-9:-16,]
+     }
+    limmer <- lmFit(limMatrix, designer)
+
+    #  Moderated t-statistic
+    outLimma <- eBayes(limmer,proportion=0.15,stdev.coef.lim=c(0.1,1))
+    pva <- outLimma$F.p.value
+    count = 0
+    for (i in 1:length(pva)) {
+      if (is.na(pva[i])) {
+        next
+      }
+      if (pva[i] < 0.05) {
+        count <- count+1
+      }
+    }
+    paste(quant, dataType, "limma IDs:", count, sep=" ")
+    #elim <- qqt(outLimma$t,df=outLimma$df.prior+outLimma$df.residual,main="Moderated t")
+  }
+
+  if (dataType == "protein" & quant == "dia")   {
+    #  Limma moderated t-test
+    limMatrix <- input[-2:-3]
+    namaste <- limMatrix[,1]
+    rownames(limMatrix) <-namaste
+    limMatrix <- limMatrix[-1]
+    designer <- read.delim("lmfit_design_matrix.txt", row.names=1)
+     if (cols == 11) {
+       designer <- designer[-9:-16,]
+     }
+    limmer <- lmFit(limMatrix, designer)
+
+    #  Moderated t-statistic
+    outLimma <- eBayes(limmer,proportion=0.17,stdev.coef.lim=c(0.1,1))
+    
+    pva <- outLimma$F.p.value
+    count = 0
+    for (i in 1:length(pva)) {
+      if (is.na(pva[i])) {
+        next
+      }
+      if (pva[i] < 0.05) {
+        count <- count+1
+      }
+    }
+    paste(quant, dataType, "limma IDs:", count, sep=" ")
+    #elim <- qqt(outLimma$t,df=outLimma$df.prior+outLimma$df.residual,main="Moderated t")
+  }
 
 
   group1 <- NA
   group2 <- NA
 
-  if (quant=="dia" & cols == 19) {
+  if (quant=="dia" & (cols == 19 | cols == 20)) {
     replicates = "8 replicates"
     group1 = c("EA100915_05_1x_dia", "EA100915_09_1x_dia", "EA100915_13_1x_dia", "EA100915_21_1x_dia", "EA100915_25_1x_dia", "EA100915_29_1x_dia", "EA100915_33_1x_dia", "EA100915_41_1x_dia")
 
     group2 = c("EA100915_06_2x_dia", "EA100915_10_2x_dia", "EA100915_14_2x_dia", "EA100915_18_2x_dia", "EA100915_26_2x_dia", "EA100915_30_2x_dia", "EA100915_34_2x_dia", "EA100915_38_2x_dia")
   }
 
-  if (quant=="dda" & cols == 19) {
+  if (quant=="dda" & (cols == 19 | cols == 20)) {
     replicates = "8 replicates"
     group1 = c("EA100915_03_1x_dda", "EA100915_11_1x_dda", "EA100915_15_1x_dda", "EA100915_19_1x_dda", "EA100915_23_1x_dda", "EA100915_31_1x_dda", "EA100915_35_1x_dda", "EA100915_39_1x_dda")
 
@@ -711,14 +743,14 @@ main <- function(input, quant, cols, fdr) {
   
   # For 4 Replicates #
   
-  if (quant=="dia" & cols == 11) {
+  if (quant=="dia" & (cols == 11 | cols == 12)) {
     replicates = "4 replicates"
     group1 = c("EA100915_05_1x_dia", "EA100915_09_1x_dia", "EA100915_13_1x_dia", "EA100915_21_1x_dia")
 
     group2 = c("EA100915_06_2x_dia", "EA100915_10_2x_dia", "EA100915_14_2x_dia", "EA100915_18_2x_dia")
   }
 
-  if (quant=="dda" & cols == 11) {
+  if (quant=="dda" & (cols == 11 | cols == 12)) {
     replicates = "4 replicates"
     group1 = c("EA100915_03_1x_dda", "EA100915_11_1x_dda", "EA100915_15_1x_dda", "EA100915_19_1x_dda")
 
@@ -726,7 +758,7 @@ main <- function(input, quant, cols, fdr) {
   }
    peca <- NA
   # ROPECA #
-  if(colnames(input)[1] == "peptide" & quant== "dia") {
+  if((dataType == "peptide") & quant== "dia") {
     pecaDat <- input
     pecaDat$peptide <-paste(pecaDat$peptide,pecaDat$species, sep= "_")
     pecaDat <- pecaDat[,-3]
@@ -735,8 +767,8 @@ main <- function(input, quant, cols, fdr) {
   }
 
    rots <- NA
-  # Rots #
-  if (colnames(input)[1] == "protein" & cols == 19) {
+  # # Rots #
+  if (dataType == "protein" & (cols == 19 | cols == 20)) {
     rotGroups <- c(0,1,1,0,0,1,0,1,0,1,1,0,0,1,0,1)
     rotD <- input[,-2]
     rotD <- rotD[,-2]
@@ -745,145 +777,50 @@ main <- function(input, quant, cols, fdr) {
     rots <- ROTS(data = rotDat, groups = rotGroups, B = 1000, K = 4000)
     summary(rots, fdr = fdr)
   }
-   if (colnames(input)[1] == "protein" & cols == 11) {
-    rotGroups <- c(0,1,1,0,0,1,0,1)
+   if ((dataType == "protein") & (cols == 11 | cols == 12)) {
+    rotGroups <- c(1,2,2,1,1,2,1,2)
     rotD <- input[,-2]
     rotD <- rotD[,-2]
     rotDat <- rotD[,-1]
     rownames(rotDat) <- rotD[,1]
-    rots <- ROTS(data = rotDat, groups = rotGroups, B = 1000, K = 4000)
-    summary(rots, fdr = fdr)
+    tot = 0
+    for (i in 1:length(rownames(rotDat))) {
+      for (j in 1:length(rotDat[i,])) {
+        if(is.na(rotDat[i,j])) {
+          tot <- tot + 1
+        }
+      }
+      if (tot > 2) {
+       rotDat <- rotDat[-i,]
+      }
+      tot=0
+    }
+    rots <- ROTS(data = rotDat, groups = rotGroups, B = 1000, K = 2000)
+    summary(rots, fdr = 0.05)
   }
   
-  #Q-test
-  # q <- qvalue(p = ttest_data$p.value)
-  # ttest_data$q.value <- q$qvalues
-  # 
-  # #Q-value confusion matrix
-  # confusionQTable <- data.frame("key" = character(0), "value" = numeric(0))
-  # 
-  # # True positives DDA
-  # confusionQTable[1,1] <- "True positives"
-  # confusionQTable[1,2] <- 
-  #   round(nrow(ttest_data %>% filter(species == "ecoli", q.value < 0.05)), 5)
-  # 
-  # # False negatives DDA
-  # confusionQTable[2,1] <- "False negatives"
-  # confusionQTable[2,2] <-
-  #   round(nrow(ttest_data %>% filter(species == "ecoli", q.value >= 0.05)), 5)
-  # 
-  # # False positives DDA
-  # confusionQTable[3,1] <- "False positives"
-  # confusionQTable[3,2] <- 
-  #   round(nrow(ttest_data %>% filter(species == "human", q.value < 0.05)), 5)
-  # 
-  # 
-  # # True negatives DDA
-  # confusionQTable[4,1] <- "True negatives"
-  # confusionQTable[4,2] <- 
-  #   round(nrow(ttest_data %>% filter(species == "human", q.value >= 0.05)), 5)
-  # 
-  # # E. Coli proteins
-  # confusionQTable[5,1] <- "Condition positive"
-  # confusionQTable[5,2] <- round(nrow(ttest_data %>% filter(species == "ecoli")), 5)
-  # 
-  # # Human proteins
-  # confusionQTable[6,1] <- "Condition negative"
-  # confusionQTable[6,2] <- round(nrow(ttest_data %>% filter(species == "human")), 5)
-  # 
-  # # P < 0.05
-  # confusionQTable[7,1] <- "Predicted condition positive"
-  # confusionQTable[7,2] <- round(nrow(ttest_data %>% filter(q.value < 0.05)), 5)
-  # 
-  # # P >= 0.05
-  # confusionQTable[8,1] <- "Predicted condition negative"
-  # confusionQTable[8,2] <- round(nrow(ttest_data %>% filter(q.value >= 0.05)), 5)
-  # 
-  # # Total population
-  # confusionQTable[9,1] <- "Total population"
-  # confusionQTable[9,2] <- round(nrow(ttest_data), 5)
-  # 
-  # # Accuracy
-  # confusionQTable[10,1] <- "Accuracy"
-  # confusionQTable[10,2] <- round((confusionQTable[1,2] + confusionQTable[4,2]) / confusionQTable[9,2], 4)
-  # 
-  # # Prevalence
-  # confusionQTable[11,1] <- "Prevalence"
-  # confusionQTable[11,2] <- round(confusionQTable[5,2] / confusionQTable[9,2], 4)
-  # 
-  # # False positive rate
-  # confusionQTable[12,1] <- "False positive rate"
-  # confusionQTable[12,2] <- round(confusionQTable[3,2] / confusionQTable[6,2], 4)
-  # 
-  # # True positive rate
-  # confusionQTable[13,1] <- "True positive rate"
-  # confusionQTable[13,2] <- round(confusionQTable[1,2] / confusionQTable[5,2], 4)
-  # 
-  # # False negative rate
-  # confusionQTable[14,1] <- "False negative rate"
-  # confusionQTable[14,2] <- round(confusionQTable[2,2] / confusionQTable[5,2], 4)
-  # 
-  # # True negative rate
-  # confusionQTable[15,1] <- "True negative rate"
-  # confusionQTable[15,2] <- round(confusionQTable[4,2] / confusionQTable[6,2], 4)
-  # 
-  # # Print table
-  # tab <- "q-value Confusion Table"
-  # plort <- tableGrob(confusionQTable, rows = rownames(confusionQTable), cols =   colnames(confusionQTable), theme = ttheme_default(), vp = NULL)
-  # grid.arrange(top = paste(input$Normalization[1], tab, sep = " "), plort)
-  # 
-  # #Generate ROC curve
-  # ttest_data$changing <- TRUE
-  # ttest_data[which(ttest_data$species == "human"), "changing"] <- FALSE
-  # 
-  # max(ttest_data$q.value)
-  # x <- seq(0.0, 1.0, 0.01)
-  # 
-  # fpr <- c()
-  # tpr <- c()
-  # 
-  # cp <- length(which(ttest_data$changing))
-  # cn <- length(which(!ttest_data$changing))
-  # for(i in 1:length(x)) {
-  #   ttest_data$test <- FALSE
-  #   ttest_data[which(ttest_data$q.value < x[i]),"test"] <- TRUE
-  #   
-  #   tpr[i] <- length(which(ttest_data$changing & ttest_data$test)) / cp
-  #   fpr[i] <- length(which(!ttest_data$changing & ttest_data$test)) / cn
-  # }
-  # 
-  # data_roc <- data.frame("threshold" = x, "tpr" = tpr, "fpr" = fpr)
-  # 
-  # g  <- ggplot(data_roc, aes(x = fpr, y = tpr, colour = threshold))
-  # roc <- plot(g + geom_point() + geom_line() + 
-  #   theme_pander(base_size = 19) + scale_fill_economist() +
-  #   theme(text=element_text(size=19,family="serif")) +
-  #   theme(axis.ticks = element_blank()) + 
-  #   theme(axis.title.y=element_text(margin=margin(0,20,0,0))) + 
-  #   theme(axis.title.x=element_text(margin=margin(20,0,0,0))) + 
-  #   labs(x="False positive rate", y = "True positive rate") + 
-  #   ggtitle(paste(input[1,]$Normalization)))
-  # 
-  # height = (tpr[-1]+tpr[-length(tpr)])/2
-  # width = diff(fpr)
-  # 
-  # AUC <- sum(height*width)
+  
+  
    ttes <- ropecaConfusion(ttest_data, replicates, "t-test", fdr)
    tAUC <- ttes[2]
    troc <- ttes[1]
   
-   if (colnames(input)[1] == "peptide")   {
+   lm <- ropecaConfusion(outLimma, replicates, "Limma", fdr)
+   replicates = "8 replicates"
+   lmAUC <- lm[[2]]
+   lmroc <- lm[1]
+   
+   if (dataType == "peptide" & quant == "dia")   {
      ropeca <- ropecaConfusion(peca, replicates, "Ropeca", fdr)
      roAUC <- ropeca[2]
      roroc <- ropeca[1]
    }
-   if (colnames(input)[1] == "protein")   {
+   if (dataType == "protein")   {
      ropeca <- ropecaConfusion(rots, replicates, "rots", fdr)
      roAUC <- ropeca[2]
      roroc <- ropeca[1]
    }
-   
-  return(list(peca,rots,outLimma,ttest_data,tAUC,troc, roAUC, roroc))
+  return(list(peca,rots[[1]],outLimma,ttest_data,tAUC,troc, roAUC, roroc))
 }
 
 ```
@@ -915,7 +852,6 @@ main <- function(input, quant, cols, fdr) {
 ```
 
 ```{r ROTS Visualization, echo = FALSE}
-
 rotsVis <- function(rotIn, pval) {
   summary(rotIn, fdr = pval)
   plot(rotIn, fdr = pval, type = "volcano")
@@ -977,6 +913,9 @@ rotTest <- function(input, quant) {
 ```{r Ropeca Confusion Matrix, echo = FALSE}
 ropecaConfusion <- function(ttest_data, Norm, Stattest, fdr) {
   
+  if (is.na(ttest_data)) {
+    return()
+  }
   ttest_data$q.value <- NA
   if (Stattest =="t-test") {
     #Q-test
@@ -989,15 +928,28 @@ ropecaConfusion <- function(ttest_data, Norm, Stattest, fdr) {
   }
   
   if (Stattest =="rots") {
-    #Member of a list so this may be wrong
     ttest_data$q.value <- ttest_data$pvalue
   }
-  
+  if (Stattest == "Limma") {
+    ttest_data$q.value <- ttest_data$F.p.value
+  }
  
-  if(is.null(ttest_data$species)) {
-    setDT(ttest_data, keep.rownames=TRUE)[]
-    ttest_data[grep("ecoli", ttest_data$rn), "species"] <- "ecoli"
-    ttest_data[grep("human", ttest_data$rn), "species"] <- "human"
+  if(is.null(ttest_data$species) & Stattest == "rots") {
+    setDT(ttest_data[[1]], keep.rownames=TRUE)[]
+    ttest_data[grep("ECOLI", ttest_data[[1]]$rn), "species"] <- "ecoli"
+    ttest_data[grep("HUMAN", ttest_data[[1]]$rn), "species"] <- "human"
+  }
+  if(is.null(ttest_data$species) & Stattest == "Ropeca") {
+    setDT(ttest_data, keep.rownames = TRUE)[]
+    ttest_data[grep("ECOLI", ttest_data$rn), "species"] <- "ecoli"
+    ttest_data[grep("HUMAN", ttest_data$rn), "species"] <- "human"
+  }
+  if(is.null(ttest_data$species) & Stattest == "Limma") {
+    ttest_data <- cbind(ttest_data$p.value, q.value = ttest_data$q.value)
+    ttest_data <- as.data.frame(ttest_data)
+    setDT(ttest_data, keep.rownames = TRUE)[]
+    ttest_data[grep("ECOLI", ttest_data$rn), "species"] <- "ecoli"
+    ttest_data[grep("HUMAN", ttest_data$rn), "species"] <- "human"
   }
   
  #Q-value confusion matrix
@@ -1152,8 +1104,6 @@ ropecaConfusion <- function(ttest_data, Norm, Stattest, fdr) {
 ```
 
 ```{r roc curve function, echo = FALSE}
-
-
 rocCurve <- function(input, id) {
   
   if (id =="ttest") {
@@ -1213,11 +1163,36 @@ rocCurve <- function(input, id) {
 }
 ```
 
-```{r , echo = FALSE}
-
+```{r rank products, echo = FALSE}
+rankPr <- function(input, quant, fdr) {
+if (quant == "dia") {
+  fdr=0.05
+  input <- read.csv("dia_protein_wide.csv")
+  input.gnames = input$protein
+  input <- data.matrix(input[4:19])
+  input.cl <- c(0,1,1,0,0,1,0,1,0,1,1,0,0,1,0,1)
+  input.origin <- c(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1)
+  
+  RP.adv.out <-  RP.advance(input,input.cl, input.origin,
+  logged=FALSE,gene.names=input.gnames,rand=123)
+  
+  plotRP(RP.adv.out, cutoff=0.05)
+  topGene(RP.adv.out,cutoff=0.05,method="pfp",logged=FALSE,logbase=2,
+        gene.names=arab.gnames)
+  }
+  
+}
 ```
 
-```{r , echo = FALSE}
+```{r matrix heatmap, echo = FALSE}
+heatMatrix <- function(input) {
+  require(moonBook)
+  x=table(acs$Dx,acs$smoking)
+  options(ztable.type="pdf")
+  z=ztable(x)
+  z %>% makeHeatmap() %>% print(caption="Table 4. Heatmap Table")
+  print(z,caption="Table 1. Basic Table")
+}
 
 ```
 

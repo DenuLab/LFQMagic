@@ -1,6 +1,6 @@
 ---
 title: "BenchmarkingFinal"
-author: "Lgan Wright"
+author: "Logan Wright"
 date: "July 15, 2019"
 output: pdf_document
 ---

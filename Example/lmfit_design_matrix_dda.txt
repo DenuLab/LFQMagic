@@ -1,0 +1,17 @@
+	1x	2x
+Intensity.03_1x_dda	1	0
+Intensity.04_2x_dda	0	1
+Intensity.08_2x_dda	0	1
+Intensity.11_1x_dda	1	0
+Intensity.15_1x_dda	1	0
+Intensity.16_2x_dda	0	1
+Intensity.19_1x_dda	1	0
+Intensity.20_2x_dda	0	1
+Intensity.23_1x_dda	1	0
+Intensity.24_2x_dda	0	1
+Intensity.28_2x_dda	0	1
+Intensity.31_1x_dda	1	0
+Intensity.35_1x_dda	1	0
+Intensity.36_2x_dda	0	1
+Intensity.39_1x_dda	1	0
+Intensity.40_2x_dda	0	1

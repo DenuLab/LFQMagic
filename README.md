@@ -9,7 +9,7 @@ All packages and dependencies used are listed at the top of the R Markdown scrip
 
 ## Built With
 
-* [RStudio](https://rstudio.com/) - The web framework used
+* [RStudio](https://rstudio.com/)
 
 
 ## Authors

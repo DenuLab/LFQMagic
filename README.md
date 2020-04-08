@@ -7,6 +7,11 @@ Quantitative mass spectrometry is a powerful ‘discovery tool’ to uncover glo
 All packages and dependencies used are listed at the top of the R Markdown script which we have coined LFQMagic
 
 
+### Instructions
+
+Detailed instuctions can be found commented throughout the script
+
+
 ## Built With
 
 * [RStudio](https://rstudio.com/)
